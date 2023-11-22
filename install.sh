@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # Configuración
-NEXTCLOUD_DOMAIN="agoranube.ddns.net"
-NEXTCLOUD_USER="agora"
-NEXTCLOUD_PASSWORD="Sinnada123"
+NEXTCLOUD_DOMAIN=""
+NEXTCLOUD_USER=""
+NEXTCLOUD_PASSWORD=""
 
 # Actualizar el sistema
 sudo apt update
