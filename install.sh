@@ -1,155 +1,125 @@
 #!/bin/bash
 
-# Este script instala y configura Nextcloud en un servidor Ubuntu con Apache2.
-# También incluye la creación de un certificado SSL.
-
-# Solicitar la contraseña para el usuario de Nextcloud
-read -s -p "Ingresa la contraseña para el usuario de Nextcloud: " nextcloud_user_password
-echo  # Agregar nueva línea después de la entrada de contraseña
-
-# Solicitar la contraseña para la base de datos de Nextcloud
-read -s -p "Ingresa la contraseña para la base de datos de Nextcloud: " db_password
-echo  # Agregar nueva línea después de la entrada de contraseña
-
-# Validar entrada del usuario
-if [[ -z "$nextcloud_user_password" || -z "$db_password" ]]; then
-    echo "Las contraseñas no pueden estar en blanco. Saliendo."
-    exit 1
-fi
-
-# Crear directorio para los certificados
-sudo mkdir -p /etc/apache2/ssl
-cd /etc/apache2/ssl
-
-# Generar claves SSL
-sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout nextcloud.key -out nextcloud.crt -subj "/C=US/ST=State/L=City/O=Organization/OU=Unit/CN=agoranube.ddns.net"
-
-# Ajustar permisos
-sudo chmod 600 nextcloud.key
-sudo chmod 644 nextcloud.crt
+# Configuración
+NEXTCLOUD_DOMAIN="agoranube.ddns.net"
+NEXTCLOUD_USER="agora"
+NEXTCLOUD_PASSWORD="Sinnada123"
 
 # Actualizar el sistema
-sudo apt update && sudo apt upgrade -y
+sudo apt update
+sudo apt upgrade -y
 
-# Verificar la actualización del sistema
-if [ $? -ne 0 ]; then
-    echo "Error al actualizar el sistema. Saliendo."
-    exit 1
-fi
+# Instalar paquetes necesarios
+sudo apt install -y apache2 mariadb-server libapache2-mod-php8.1 php8.1-cli php8.1-mysql php8.1-gd php8.1-json php8.1-curl php8.1-zip php8.1-xml php8.1-mbstring php8.1-bz2 php8.1-intl php8.1-ldap php8.1-apcu php8.1-redis php8.1-imagick php8.1-fpm redis-server fail2ban ufw
 
-# Configuración de firewall (ufw)
-sudo apt install -y ufw
-sudo ufw allow 22  # Permitir SSH
-sudo ufw allow 80  # Permitir tráfico HTTP
-sudo ufw allow 443 # Permitir tráfico HTTPS
-sudo ufw enable
-
-# Instalar Apache2 y módulos SSL
-sudo apt install -y apache2 libapache2-mod-php
-
-# Habilitar módulos
-sudo a2enmod ssl
-sudo a2enmod headers
+# Configurar Apache y PHP
 sudo a2enmod rewrite
+sudo a2enmod headers
+sudo a2enmod env
+sudo a2enmod dir
+sudo a2enmod mime
+sudo systemctl restart apache2
 
-# Configurar Apache2 con SSL
-sudo tee /etc/apache2/sites-available/nextcloud.conf > /dev/null <<EOL
+# Crear la base de datos para Nextcloud
+sudo mysql_secure_installation
+sudo mysql -u root -p -e "CREATE DATABASE nextcloud CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci;"
+sudo mysql -u root -p -e "CREATE USER '$NEXTCLOUD_USER'@'localhost' IDENTIFIED BY '$NEXTCLOUD_PASSWORD';"
+sudo mysql -u root -p -e "GRANT ALL PRIVILEGES ON nextcloud.* TO '$NEXTCLOUD_USER'@'localhost';"
+sudo mysql -u root -p -e "FLUSH PRIVILEGES;"
+
+# Descargar e instalar Nextcloud
+wget https://download.nextcloud.com/server/releases/latest.zip
+sudo unzip latest.zip -d /var/www/html/
+sudo chown -R www-data:www-data /var/www/html/nextcloud/
+sudo chmod -R 755 /var/www/html/nextcloud/
+
+# Configurar el sitio de Apache
+sudo tee /etc/apache2/sites-available/nextcloud.conf <<EOF
 <VirtualHost *:80>
-    ServerName agoranube.ddns.net
-    Redirect permanent / https://agoranube.ddns.net/
-</VirtualHost>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/html/nextcloud/
+    ServerName $NEXTCLOUD_DOMAIN
 
-<VirtualHost *:443>
-    ServerName agoranube.ddns.net
-    DocumentRoot /var/www/html/nextcloud
-
-    SSLEngine on
-    SSLCertificateFile /etc/apache2/ssl/nextcloud.crt
-    SSLCertificateKeyFile /etc/apache2/ssl/nextcloud.key
+    ErrorLog \${APACHE_LOG_DIR}/error.log
+    CustomLog \${APACHE_LOG_DIR}/access.log combined
 
     <Directory /var/www/html/nextcloud/>
         Options +FollowSymlinks
         AllowOverride All
+        Require all granted
     </Directory>
 
-    ErrorLog ${APACHE_LOG_DIR}/error.log
-    CustomLog ${APACHE_LOG_DIR}/access.log combined
 </VirtualHost>
-EOL
+EOF
 
-# Habilitar el sitio
-sudo a2ensite nextcloud
-
-# Reiniciar Apache2
+# Habilitar el sitio de Nextcloud y reiniciar Apache
+sudo a2ensite nextcloud.conf
 sudo systemctl restart apache2
 
-# Descargar e instalar Nextcloud
-wget https://download.nextcloud.com/server/releases/latest.zip -P /tmp
-sudo apt install -y unzip
-sudo unzip /tmp/latest.zip -d /var/www/html/
-sudo chown -R www-data:www-data /var/www/html/nextcloud/
+# Instalar Let's Encrypt y obtener certificado
+sudo apt install -y certbot python3-certbot-apache
+sudo certbot --apache --agree-tos --redirect --hsts --staple-ocsp --email admin@$NEXTCLOUD_DOMAIN -d $NEXTCLOUD_DOMAIN
 
-# Configurar Nextcloud
-sudo nextcloud.occ maintenance:install --database "mysql" --database-name "nextcloud" --database-user "nextcloud" --database-pass "$db_password"
-sudo nextcloud.occ maintenance:mode --on
+# Configurar Redis para Nextcloud
+sudo systemctl enable redis-server
+sudo systemctl start redis-server
 
-# Verificar la instalación de Nextcloud
-nextcloud_status=$(sudo -u www-data php /var/www/html/nextcloud/occ status | grep "installed:")
+# Configurar fail2ban
+sudo cp /etc/fail2ban/jail.conf /etc/fail2ban/jail.local
+sudo systemctl enable fail2ban
+sudo systemctl start fail2ban
 
-# Mostrar el estado de Nextcloud
-echo "Estado de Nextcloud: $nextcloud_status"
+# Configurar ufw
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
 
-# Proporcionar el enlace para navegar
-echo "Puedes acceder a Nextcloud en: https://agoranube.ddns.net/"
+# Calificar la seguridad de Nextcloud
+sudo -u www-data php /var/www/html/nextcloud/occ maintenance:install --database "mysql" --database-name "nextcloud"  --database-user "$NEXTCLOUD_USER" --database-pass "$NEXTCLOUD_PASSWORD" --admin-user "admin" --admin-pass "$NEXTCLOUD_PASSWORD"
 
-# Instalar seguridad adicional
-sudo apt install -y fail2ban
+# Configuraciones de seguridad adicionales
+sudo -u www-data php /var/www/html/nextcloud/occ config:system:set loglevel --value="2"
+sudo -u www-data php /var/www/html/nextcloud/occ config:system:set log_rotate_size --value="104857600"
+sudo -u www-data php /var/www/html/nextcloud/occ config:system:set logdateformat --value="Y-m-d H:i:s"
+sudo -u www-data php /var/www/html/nextcloud/occ config:system:set syslog_tag --value="nextcloud"
+sudo -u www-data php /var/www/html/nextcloud/occ config:system:set syslog_loglevel --value="2"
 
-# Configuración de seguridad de PHP
-sudo sed -i 's/expose_php = On/expose_php = Off/' /etc/php/7.*/apache2/php.ini
+# Configurar el dominio en config.php
+sudo -u www-data sed -i "s/'overwrite.cli.url' => '',/'overwrite.cli.url' => 'https:\/\/$NEXTCLOUD_DOMAIN',/" /var/www/html/nextcloud/config/config.php
 
-# Reforzar seguridad de MySQL
-sudo tee /etc/mysql/mariadb.conf.d/99-nextcloud.cnf > /dev/null <<EOL
-[mysqld]
-bind-address = 127.0.0.1
-EOL
-
-# Reiniciar servicios después de la configuración de seguridad
+# Reiniciar Apache después de realizar cambios en config.php
 sudo systemctl restart apache2
-sudo systemctl restart mysql
 
-# Monitorización de registros de seguridad
-sudo apt install -y logwatch
+# Ejecutar el cron de fondo de Nextcloud
+sudo -u www-data php /var/www/html/nextcloud/occ background:cron
 
-# Mostrar los servicios y paquetes instalados
-echo -e "\nServicios y paquetes instalados:"
-echo "---------------------------------"
-echo "1. Apache2"
-echo "2. MariaDB Server"
-echo "3. Nextcloud"
-echo "4. Fail2Ban"
-echo "5. Logwatch"
+# Configurar el archivo 001-nextcloud-le-ssl.conf
+sudo tee /etc/apache2/sites-available/001-nextcloud-le-ssl.conf <<EOF
+<IfModule mod_ssl.c>
+<VirtualHost *:443>
+    ServerAdmin webmaster@localhost
+    DocumentRoot /var/www/html/nextcloud/
+    ServerName $NEXTCLOUD_DOMAIN
 
-# Lista de paquetes instalados
-installed_packages=$(dpkg -l | grep ^ii | awk '{print $2}')
-echo -e "\nPaquetes instalados:"
-echo "$installed_packages"
+    ErrorLog \${APACHE_LOG_DIR}/error.log
+    CustomLog \${APACHE_LOG_DIR}/access.log combined
 
-# Comandos adicionales
-echo -e "\nComandos adicionales ejecutados:"
-echo "---------------------------------"
-echo "apt install -y apt-transport-https bash-completion bzip2 ca-certificates cron curl dialog \
-dirmngr ffmpeg ghostscript git gpg gnupg gnupg2 htop jq libfile-fcntllock-perl \
-libfontconfig1 libfuse2 locate lsb-release net-tools rsyslog screen smbclient \
-socat software-properties-common ssl-cert tree ubuntu-keyring unzip wget zip  systemctl mask sleep.target suspend.target hibernate.target"
-echo "reboot now"
-echo "sudo -s"
-echo "apt update && apt upgrade -y && apt autoremove -y && apt autoclean -y"
-echo "mkdir -p /var/www /var/nc_data"
-echo "chown -R www-data:www-data /var/nc_data /var/www"
-echo "apt install -y redis-server libapache2-mod-php8.1 php-common \
-php8.1-{fpm,gd,curl,xml,zip,intl,mbstring,bz2,ldap,apcu,bcmath,gmp,imagick,igbinary,mysql,redis,smbclient,cli,common,opcache,readline} \
-imagemagick --allow-change-held-packages"
-echo "timedatectl set-timezone Europe/Madrid"
-echo "wget https://download.nextcloud.com/server/releases/latest.zip"
-echo "unzip latest.zip && mv nextcloud/ /var/www/ && chown -R www-data:www-data /var/www/nextcloud && rm -f latest.zip"
+    <Directory /var/www/html/nextcloud/>
+        Options +FollowSymlinks
+        AllowOverride All
+        Require all granted
+    </Directory>
+
+    SSLCertificateFile /etc/letsencrypt/live/$NEXTCLOUD_DOMAIN/fullchain.pem
+    SSLCertificateKeyFile /etc/letsencrypt/live/$NEXTCLOUD_DOMAIN/privkey.pem
+    Include /etc/letsencrypt/options-ssl-apache.conf
+</VirtualHost>
+</IfModule>
+EOF
+
+# Habilitar el sitio SSL y reiniciar Apache
+sudo a2ensite 001-nextcloud-le-ssl.conf
+sudo systemctl restart apache2
+
+# Imprimir mensaje de finalización
+echo "La instalación de Nextcloud se ha completado. Puedes acceder a tu instancia en: https://$NEXTCLOUD_DOMAIN"
