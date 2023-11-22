@@ -83,16 +83,11 @@ sudo a2ensite nextcloud
 # Reiniciar Apache2
 sudo systemctl restart apache2
 
-# Instalar Nextcloud
-sudo apt install -y mariadb-server
-sudo apt install -y nextcloud
-
-# Configurar la base de datos para Nextcloud
-sudo mysql_secure_installation
-sudo mysql -u root -p"$db_password" -e "CREATE DATABASE IF NOT EXISTS nextcloud;"
-sudo mysql -u root -p"$db_password" -e "CREATE USER IF NOT EXISTS 'nextcloud'@'localhost' IDENTIFIED BY '$db_password';"
-sudo mysql -u root -p"$db_password" -e "GRANT ALL PRIVILEGES ON nextcloud.* TO 'nextcloud'@'localhost' WITH GRANT OPTION;"
-sudo mysql -u root -p"$db_password" -e "FLUSH PRIVILEGES;"
+# Descargar e instalar Nextcloud
+wget https://download.nextcloud.com/server/releases/latest.zip -P /tmp
+sudo apt install -y unzip
+sudo unzip /tmp/latest.zip -d /var/www/html/
+sudo chown -R www-data:www-data /var/www/html/nextcloud/
 
 # Configurar Nextcloud
 sudo nextcloud.occ maintenance:install --database "mysql" --database-name "nextcloud" --database-user "nextcloud" --database-pass "$db_password"
@@ -140,5 +135,21 @@ installed_packages=$(dpkg -l | grep ^ii | awk '{print $2}')
 echo -e "\nPaquetes instalados:"
 echo "$installed_packages"
 
-# Mensaje final
-echo -e "\nLa instalación y configuración de Nextcloud se ha completado con éxito."
+# Comandos adicionales
+echo -e "\nComandos adicionales ejecutados:"
+echo "---------------------------------"
+echo "apt install -y apt-transport-https bash-completion bzip2 ca-certificates cron curl dialog \
+dirmngr ffmpeg ghostscript git gpg gnupg gnupg2 htop jq libfile-fcntllock-perl \
+libfontconfig1 libfuse2 locate lsb-release net-tools rsyslog screen smbclient \
+socat software-properties-common ssl-cert tree ubuntu-keyring unzip wget zip  systemctl mask sleep.target suspend.target hibernate.target"
+echo "reboot now"
+echo "sudo -s"
+echo "apt update && apt upgrade -y && apt autoremove -y && apt autoclean -y"
+echo "mkdir -p /var/www /var/nc_data"
+echo "chown -R www-data:www-data /var/nc_data /var/www"
+echo "apt install -y redis-server libapache2-mod-php8.1 php-common \
+php8.1-{fpm,gd,curl,xml,zip,intl,mbstring,bz2,ldap,apcu,bcmath,gmp,imagick,igbinary,mysql,redis,smbclient,cli,common,opcache,readline} \
+imagemagick --allow-change-held-packages"
+echo "timedatectl set-timezone Europe/Madrid"
+echo "wget https://download.nextcloud.com/server/releases/latest.zip"
+echo "unzip latest.zip && mv nextcloud/ /var/www/ && chown -R www-data:www-data /var/www/nextcloud && rm -f latest.zip"
